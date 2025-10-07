@@ -265,6 +265,8 @@ const CLPValidKeys = Object.freeze([
   'addField',
   'readUserFields',
   'writeUserFields',
+  'readRoleFields',
+  'writeRoleFields',
   'protectedFields',
 ]);
 
@@ -287,7 +289,12 @@ function validateCLP(perms: ClassLevelPermissions, fields: SchemaFields, userIdR
     // throws when root fields are of wrong type
     validateCLPjson(operation, operationKey);
 
-    if (operationKey === 'readUserFields' || operationKey === 'writeUserFields') {
+    if (
+      operationKey === 'readUserFields' ||
+      operationKey === 'writeUserFields' ||
+      operationKey === 'readRoleFields' ||
+      operationKey === 'writeRoleFields'
+    ) {
       // validate grouped pointer permissions
       // must be an array with field names
       for (const fieldName of operation) {
@@ -400,7 +407,12 @@ function validateCLP(perms: ClassLevelPermissions, fields: SchemaFields, userIdR
 }
 
 function validateCLPjson(operation: any, operationKey: string) {
-  if (operationKey === 'readUserFields' || operationKey === 'writeUserFields') {
+  if (
+    operationKey === 'readUserFields' ||
+    operationKey === 'writeUserFields' ||
+    operationKey === 'readRoleFields' ||
+    operationKey === 'writeRoleFields'
+  ) {
     if (!Array.isArray(operation)) {
       throw new Parse.Error(
         Parse.Error.INVALID_JSON,
@@ -422,24 +434,50 @@ function validateCLPjson(operation: any, operationKey: string) {
 
 function validatePointerPermission(fieldName: string, fields: Object, operation: string) {
   // Uses collection schema to ensure the field is of type:
-  // - Pointer<_User> (pointers)
-  // - Array
-  //
-  //    It's not possible to enforce type on Array's items in schema
-  //  so we accept any Array field, and later when applying permissions
-  //  only items that are pointers to _User are considered.
-  if (
-    !(
-      fields[fieldName] &&
-      ((fields[fieldName].type == 'Pointer' && fields[fieldName].targetClass == '_User') ||
-        fields[fieldName].type == 'Array')
-    )
-  ) {
+  // - Pointer<_User> or Pointer<_Role> (pointers)
+  // - Array or Object (validated later when applying permissions)
+  const field = fields[fieldName];
+  const isRoleOperation = operation === 'readRoleFields' || operation === 'writeRoleFields';
+  const isUserOperation = operation === 'readUserFields' || operation === 'writeUserFields';
+
+  if (!field) {
     throw new Parse.Error(
       Parse.Error.INVALID_JSON,
       `'${fieldName}' is not a valid column for class level pointer permissions ${operation}`
     );
   }
+
+  if (field.type === 'Pointer') {
+    const targetClass = field.targetClass;
+    if (targetClass !== '_User' && targetClass !== '_Role') {
+      throw new Parse.Error(
+        Parse.Error.INVALID_JSON,
+        `'${fieldName}' is not a valid column for class level pointer permissions ${operation}`
+      );
+    }
+    if (isRoleOperation && targetClass !== '_Role') {
+      throw new Parse.Error(
+        Parse.Error.INVALID_JSON,
+        `'${fieldName}' must be a Pointer<_Role> for class level pointer permissions ${operation}`
+      );
+    }
+    if (isUserOperation && targetClass !== '_User') {
+      throw new Parse.Error(
+        Parse.Error.INVALID_JSON,
+        `'${fieldName}' must be a Pointer<_User> for class level pointer permissions ${operation}`
+      );
+    }
+    return;
+  }
+
+  if (field.type === 'Array' || field.type === 'Object') {
+    return;
+  }
+
+  throw new Parse.Error(
+    Parse.Error.INVALID_JSON,
+    `'${fieldName}' is not a valid column for class level pointer permissions ${operation}`
+  );
 }
 
 const joinClassRegex = /^_Join:[A-Za-z0-9_]+:[A-Za-z0-9_]+/;
@@ -1420,22 +1458,27 @@ export default class SchemaController {
 
     // No matching CLP, let's check the Pointer permissions
     // And handle those later
-    const permissionField =
-      ['get', 'find', 'count'].indexOf(operation) > -1 ? 'readUserFields' : 'writeUserFields';
+    const isReadOperation = ['get', 'find', 'count'].indexOf(operation) > -1;
+    const userPermissionField = isReadOperation ? 'readUserFields' : 'writeUserFields';
+    const rolePermissionField = isReadOperation ? 'readRoleFields' : 'writeRoleFields';
+
+    const hasUserPointerPermissions =
+      Array.isArray(classPermissions[userPermissionField]) &&
+      classPermissions[userPermissionField].length > 0;
+    const hasRolePointerPermissions =
+      Array.isArray(classPermissions[rolePermissionField]) &&
+      classPermissions[rolePermissionField].length > 0;
 
     // Reject create when write lockdown
-    if (permissionField == 'writeUserFields' && operation == 'create') {
+    if (operation === 'create' && (hasUserPointerPermissions || hasRolePointerPermissions)) {
       throw new Parse.Error(
         Parse.Error.OPERATION_FORBIDDEN,
         `Permission denied for action ${operation} on class ${className}.`
       );
     }
 
-    // Process the readUserFields later
-    if (
-      Array.isArray(classPermissions[permissionField]) &&
-      classPermissions[permissionField].length > 0
-    ) {
+    // Process the pointer fields later
+    if (hasUserPointerPermissions || hasRolePointerPermissions) {
       return Promise.resolve();
     }
 

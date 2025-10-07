@@ -279,7 +279,7 @@ describe('Parse Role testing', () => {
             return Promise.resolve({
               id: role.id,
               name: role.get('name'),
-              roleNames: result,
+              roleNames: result.names,
             });
           });
         });

@@ -254,6 +254,30 @@ Auth.prototype.getUserRoles = function () {
   return this.rolePromise;
 };
 
+Auth.prototype.getUserRoleIds = function () {
+  if (this.isMaster || this.isMaintenance || !this.user) {
+    return Promise.resolve([]);
+  }
+  return this.getUserRoles().then(() => {
+    if (this.userRoleIds && this.userRoleIds.length) {
+      return this.userRoleIds;
+    }
+    return this._ensureRoleData().then(() => this.userRoleIds || []);
+  });
+};
+
+Auth.prototype.getUserRolePointers = function () {
+  if (this.isMaster || this.isMaintenance || !this.user) {
+    return Promise.resolve([]);
+  }
+  return this.getUserRoles().then(() => {
+    if (this.userRolePointers && this.userRolePointers.length) {
+      return this.userRolePointers;
+    }
+    return this._ensureRoleData().then(() => this.userRolePointers || []);
+  });
+};
+
 Auth.prototype.getRolesForUser = async function () {
   //Stack all Parse.Role
   const results = [];
@@ -284,13 +308,26 @@ Auth.prototype.getRolesForUser = async function () {
 };
 
 // Iterates through the role tree and compiles a user's roles
-Auth.prototype._loadRoles = async function () {
-  if (this.cacheController) {
+Auth.prototype._loadRoles = async function ({ forceReload = false } = {}) {
+  if (this.cacheController && !forceReload) {
     const cachedRoles = await this.cacheController.role.get(this.user.id);
     if (cachedRoles != null) {
       this.fetchedRoles = true;
-      this.userRoles = cachedRoles;
-      return cachedRoles;
+      if (Array.isArray(cachedRoles)) {
+        this.userRoles = cachedRoles;
+        this.userRoleIds = [];
+        this.userRolePointers = [];
+      } else {
+        this.userRoles = cachedRoles.names || [];
+        this.userRoleIds = cachedRoles.ids || [];
+        this.userRolePointers = (this.userRoleIds || []).map(objectId => ({
+          __type: 'Pointer',
+          className: '_Role',
+          objectId,
+        }));
+      }
+      this.rolePromise = null;
+      return this.userRoles;
     }
   }
 
@@ -298,6 +335,8 @@ Auth.prototype._loadRoles = async function () {
   const results = await this.getRolesForUser();
   if (!results.length) {
     this.userRoles = [];
+    this.userRoleIds = [];
+    this.userRolePointers = [];
     this.fetchedRoles = true;
     this.rolePromise = null;
 
@@ -315,21 +354,57 @@ Auth.prototype._loadRoles = async function () {
   );
 
   // run the recursive finding
-  const roleNames = await this._getAllRolesNamesForRoleIds(rolesMap.ids, rolesMap.names);
+  const roleInfo = await this._getAllRolesNamesForRoleIds(
+    rolesMap.ids,
+    rolesMap.names,
+    rolesMap.ids
+  );
+  const roleNames = [...new Set(roleInfo.names)];
+  const roleIds = [...new Set(roleInfo.ids)];
+
   this.userRoles = roleNames.map(r => {
     return 'role:' + r;
   });
+  this.userRoleIds = roleIds;
+  this.userRolePointers = this.userRoleIds.map(objectId => ({
+    __type: 'Pointer',
+    className: '_Role',
+    objectId,
+  }));
   this.fetchedRoles = true;
   this.rolePromise = null;
   this.cacheRoles();
   return this.userRoles;
 };
 
+Auth.prototype._ensureRoleData = function () {
+  if (this.isMaster || this.isMaintenance || !this.user) {
+    return Promise.resolve();
+  }
+  if ((this.userRolePointers && this.userRolePointers.length) || !this.userRoles || !this.userRoles.length) {
+    return Promise.resolve();
+  }
+  if (this.rolePromise) {
+    return this.rolePromise.then(() => {
+      if (this.userRolePointers && this.userRolePointers.length) {
+        return;
+      }
+      this.rolePromise = this._loadRoles({ forceReload: true });
+      return this.rolePromise.then(() => {});
+    });
+  }
+  this.rolePromise = this._loadRoles({ forceReload: true });
+  return this.rolePromise.then(() => {});
+};
+
 Auth.prototype.cacheRoles = function () {
   if (!this.cacheController) {
     return false;
   }
-  this.cacheController.role.put(this.user.id, Array(...this.userRoles));
+  this.cacheController.role.put(this.user.id, {
+    names: Array(...this.userRoles),
+    ids: Array(...(this.userRoleIds || [])),
+  });
   return true;
 };
 
@@ -379,8 +454,13 @@ Auth.prototype.getRolesByIds = async function (ins) {
   return results;
 };
 
-// Given a list of roleIds, find all the parent roles, returns a promise with all names
-Auth.prototype._getAllRolesNamesForRoleIds = function (roleIDs, names = [], queriedRoles = {}) {
+// Given a list of roleIds, find all the parent roles, returns a promise with all names and ids
+Auth.prototype._getAllRolesNamesForRoleIds = function (
+  roleIDs,
+  names = [],
+  ids = [],
+  queriedRoles = {}
+) {
   const ins = roleIDs.filter(roleID => {
     const wasQueried = queriedRoles[roleID] !== true;
     queriedRoles[roleID] = true;
@@ -389,14 +469,17 @@ Auth.prototype._getAllRolesNamesForRoleIds = function (roleIDs, names = [], quer
 
   // all roles are accounted for, return the names
   if (ins.length == 0) {
-    return Promise.resolve([...new Set(names)]);
+    return Promise.resolve({
+      names: [...new Set(names)],
+      ids: [...new Set(ids)],
+    });
   }
 
   return this.getRolesByIds(ins)
     .then(results => {
       // Nothing found
       if (!results.length) {
-        return Promise.resolve(names);
+        return { names, ids };
       }
       // Map the results with all Ids and names
       const resultMap = results.reduce(
@@ -409,11 +492,15 @@ Auth.prototype._getAllRolesNamesForRoleIds = function (roleIDs, names = [], quer
       );
       // store the new found names
       names = names.concat(resultMap.names);
+      ids = ids.concat(resultMap.ids);
       // find the next ones, circular roles will be cut
-      return this._getAllRolesNamesForRoleIds(resultMap.ids, names, queriedRoles);
+      return this._getAllRolesNamesForRoleIds(resultMap.ids, names, ids, queriedRoles);
     })
-    .then(names => {
-      return Promise.resolve([...new Set(names)]);
+    .then(result => {
+      return Promise.resolve({
+        names: [...new Set(result.names)],
+        ids: [...new Set(result.ids)],
+      });
     });
 };
 

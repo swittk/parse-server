@@ -177,10 +177,16 @@ RestWrite.prototype.getUserAndRoleACL = function () {
   this.runOptions.acl = ['*'];
 
   if (this.auth.user) {
-    return this.auth.getUserRoles().then(roles => {
-      this.runOptions.acl = this.runOptions.acl.concat(roles, [this.auth.user.id]);
-      return;
-    });
+    return this.auth
+      .getUserRoles()
+      .then(roles => {
+        this.runOptions.acl = this.runOptions.acl.concat(roles, [this.auth.user.id]);
+        return this.auth.getUserRolePointers();
+      })
+      .then(rolePointers => {
+        this.runOptions.rolePointers = rolePointers;
+        return;
+      });
   } else {
     return Promise.resolve();
   }

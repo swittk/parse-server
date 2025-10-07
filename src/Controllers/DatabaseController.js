@@ -489,7 +489,7 @@ class DatabaseController {
     className: string,
     query: any,
     update: any,
-    { acl, many, upsert, addsField }: FullQueryOptions = {},
+    { acl, many, upsert, addsField, rolePointers }: FullQueryOptions = {},
     skipSanitization: boolean = false,
     validateOnly: boolean = false,
     validSchemaController: SchemaController.SchemaController
@@ -520,7 +520,8 @@ class DatabaseController {
               className,
               'update',
               query,
-              aclGroup
+              aclGroup,
+              { rolePointers }
             );
 
             if (addsField) {
@@ -532,7 +533,8 @@ class DatabaseController {
                     className,
                     'addField',
                     query,
-                    aclGroup
+                    aclGroup,
+                    { rolePointers }
                   ),
                 ],
               };
@@ -765,7 +767,7 @@ class DatabaseController {
   destroy(
     className: string,
     query: any,
-    { acl }: QueryOptions = {},
+    { acl, rolePointers }: QueryOptions = {},
     validSchemaController: SchemaController.SchemaController
   ): Promise<any> {
     const isMaster = acl === undefined;
@@ -782,7 +784,8 @@ class DatabaseController {
             className,
             'delete',
             query,
-            aclGroup
+            aclGroup,
+            { rolePointers }
           );
           if (!query) {
             throw new Parse.Error(Parse.Error.OBJECT_NOT_FOUND, 'Object not found.');
@@ -1189,6 +1192,7 @@ class DatabaseController {
       caseInsensitive = false,
       explain,
       comment,
+      rolePointers,
     }: any = {},
     auth: any = {},
     validSchemaController: SchemaController.SchemaController
@@ -1269,7 +1273,8 @@ class DatabaseController {
                   className,
                   op,
                   query,
-                  aclGroup
+                  aclGroup,
+                  { rolePointers }
                 );
                 /* Don't use projections to optimize the protectedFields since the protectedFields
                   based on pointer-permissions are determined after querying. The filtering can
@@ -1495,7 +1500,8 @@ class DatabaseController {
     className: string,
     operation: string,
     query: any,
-    aclGroup: any[] = []
+    aclGroup: any[] = [],
+    pointerOptions: any = {}
   ): any {
     // Check if class has public permission for operation
     // If the BaseCLP pass, let go through
@@ -1508,23 +1514,31 @@ class DatabaseController {
       return acl.indexOf('role:') != 0 && acl != '*';
     });
 
-    const groupKey =
-      ['get', 'find', 'count'].indexOf(operation) > -1 ? 'readUserFields' : 'writeUserFields';
-
-    const permFields = [];
+    const isReadOperation = ['get', 'find', 'count'].indexOf(operation) > -1;
+    const userGroupKey = isReadOperation ? 'readUserFields' : 'writeUserFields';
+    const roleGroupKey = isReadOperation ? 'readRoleFields' : 'writeRoleFields';
+    const pointerPermissions = new Map();
+    const addPermission = (field, type) => {
+      if (!pointerPermissions.has(field)) {
+        pointerPermissions.set(field, { user: false, role: false });
+      }
+      pointerPermissions.get(field)[type] = true;
+    };
 
     if (perms[operation] && perms[operation].pointerFields) {
-      permFields.push(...perms[operation].pointerFields);
+      perms[operation].pointerFields.forEach(field => addPermission(field, 'user'));
     }
 
-    if (perms[groupKey]) {
-      for (const field of perms[groupKey]) {
-        if (!permFields.includes(field)) {
-          permFields.push(field);
-        }
-      }
+    if (Array.isArray(perms[userGroupKey])) {
+      perms[userGroupKey].forEach(field => addPermission(field, 'user'));
     }
-    // the ACL should have exactly 1 user
+
+    if (Array.isArray(perms[roleGroupKey])) {
+      perms[roleGroupKey].forEach(field => addPermission(field, 'role'));
+    }
+
+    const permFields = Array.from(pointerPermissions.keys());
+
     if (permFields.length > 0) {
       // the ACL should have exactly 1 user
       // No user set return undefined
@@ -1538,6 +1552,10 @@ class DatabaseController {
         className: '_User',
         objectId: userId,
       };
+      const rolePointers =
+        (pointerOptions && Array.isArray(pointerOptions.rolePointers)
+          ? pointerOptions.rolePointers
+          : []) || [];
 
       const queries = permFields.map(key => {
         const fieldDescriptor = schema.getExpectedType(className, key);
@@ -1548,23 +1566,63 @@ class DatabaseController {
             ? fieldDescriptor.type
             : null;
 
+        const pointerAccess = pointerPermissions.get(key) || {};
+        const pointerValues = [];
+
+        if (pointerAccess.user) {
+          pointerValues.push(userPointer);
+        }
+        if (pointerAccess.role) {
+          if (!rolePointers.length && !pointerAccess.user) {
+            return undefined;
+          }
+          pointerValues.push(...rolePointers);
+        }
+
+        const uniquePointerValues = pointerValues.filter((pointer, index, array) => {
+          return (
+            array.findIndex(
+              value => value.className === pointer.className && value.objectId === pointer.objectId
+            ) === index
+          );
+        });
+
+        if (uniquePointerValues.length === 0) {
+          return undefined;
+        }
+
         let queryClause;
 
         if (fieldType === 'Pointer') {
           // constraint for single pointer setup
-          queryClause = { [key]: userPointer };
+          if (uniquePointerValues.length === 1) {
+            queryClause = { [key]: uniquePointerValues[0] };
+          } else {
+            queryClause = { [key]: { $in: uniquePointerValues } };
+          }
         } else if (fieldType === 'Array') {
           // constraint for users-array setup
-          queryClause = { [key]: { $all: [userPointer] } };
+          if (uniquePointerValues.length === 1) {
+            queryClause = { [key]: { $all: uniquePointerValues } };
+          } else {
+            queryClause = { [key]: { $in: uniquePointerValues } };
+          }
         } else if (fieldType === 'Object') {
           // constraint for object setup
-          queryClause = { [key]: userPointer };
+          if (uniquePointerValues.length === 1) {
+            queryClause = { [key]: uniquePointerValues[0] };
+          } else {
+            queryClause = { [key]: { $in: uniquePointerValues } };
+          }
         } else {
           // This means that there is a CLP field of an unexpected type. This condition should not happen, which is
           // why is being treated as an error.
           throw Error(
             `An unexpected condition occurred when resolving pointer permissions: ${className} ${key}`
           );
+        }
+        if (!queryClause) {
+          return undefined;
         }
         // if we already have a constraint on the key, use the $and
         if (Object.prototype.hasOwnProperty.call(query, key)) {
@@ -1573,6 +1631,10 @@ class DatabaseController {
         // otherwise just add the constaint
         return Object.assign({}, query, queryClause);
       });
+
+      if (queries.indexOf(undefined) > -1) {
+        return undefined;
+      }
 
       return queries.length === 1 ? queries[0] : this.reduceOrOperation({ $or: queries });
     } else {

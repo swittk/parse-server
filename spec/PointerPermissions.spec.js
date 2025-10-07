@@ -1032,6 +1032,62 @@ describe('Pointer Permissions', () => {
     });
   });
 
+  describe('using role pointers', () => {
+    it('should allow find for matching role pointer field', async done => {
+      const config = Config.get(Parse.applicationId);
+      const roleACL = new Parse.ACL();
+      roleACL.setPublicReadAccess(true);
+      roleACL.setPublicWriteAccess(true);
+      try {
+        await Parse.User.logOut();
+        const roleUser = new Parse.User();
+        roleUser.setUsername('roleUser');
+        roleUser.setPassword('password');
+        await roleUser.signUp();
+
+        const otherUser = new Parse.User();
+        otherUser.setUsername('roleOther');
+        otherUser.setPassword('password');
+        await otherUser.signUp();
+
+        const roleA = new Parse.Role('RoleA', roleACL);
+        roleA.getUsers().add(roleUser);
+        await roleA.save(null, { useMasterKey: true });
+
+        const roleB = new Parse.Role('RoleB', roleACL);
+        await roleB.save(null, { useMasterKey: true });
+
+        const schema = await config.database.loadSchema();
+        await schema.addClassIfNotExists(
+          'RoleProtected',
+          { visibleToRole: { type: 'Pointer', targetClass: '_Role' } },
+          { find: {}, get: {}, readRoleFields: ['visibleToRole'] }
+        );
+
+        const objA = new Parse.Object('RoleProtected');
+        objA.set('visibleToRole', roleA);
+        const objB = new Parse.Object('RoleProtected');
+        objB.set('visibleToRole', roleB);
+        await Parse.Object.saveAll([objA, objB], { useMasterKey: true });
+
+        await Parse.User.logIn('roleUser', 'password');
+        const results = await new Parse.Query('RoleProtected').find();
+        expect(results.length).toBe(1);
+        expect(results[0].id).toBe(objA.id);
+
+        await Parse.User.logOut();
+        await Parse.User.logIn('roleOther', 'password');
+        const otherResults = await new Parse.Query('RoleProtected').find();
+        expect(otherResults.length).toBe(0);
+
+        done();
+      } catch (error) {
+        fail(JSON.stringify(error));
+        done();
+      }
+    });
+  });
+
   describe('using arrays of user-pointers', () => {
     it('should work with find', async done => {
       const config = Config.get(Parse.applicationId);

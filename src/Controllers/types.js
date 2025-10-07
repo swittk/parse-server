@@ -33,5 +33,7 @@ export type ClassLevelPermissions = {
   addField?: { [string]: boolean },
   readUserFields?: string[],
   writeUserFields?: string[],
+  readRoleFields?: string[],
+  writeRoleFields?: string[],
   protectedFields?: { [string]: string[] },
 };

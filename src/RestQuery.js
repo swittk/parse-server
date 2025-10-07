@@ -380,10 +380,16 @@ _UnsafeRestQuery.prototype.getUserAndRoleACL = function () {
   this.findOptions.acl = ['*'];
 
   if (this.auth.user) {
-    return this.auth.getUserRoles().then(roles => {
-      this.findOptions.acl = this.findOptions.acl.concat(roles, [this.auth.user.id]);
-      return;
-    });
+    return this.auth
+      .getUserRoles()
+      .then(roles => {
+        this.findOptions.acl = this.findOptions.acl.concat(roles, [this.auth.user.id]);
+        return this.auth.getUserRolePointers();
+      })
+      .then(rolePointers => {
+        this.findOptions.rolePointers = rolePointers;
+        return;
+      });
   } else {
     return Promise.resolve();
   }
