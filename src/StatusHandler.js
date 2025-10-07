@@ -128,10 +128,16 @@ export function jobStatusHandler(config) {
 }
 
 export function pushStatusHandler(config, existingObjectId) {
+  // When push status recording is disabled we expose a lightweight shim that
+  // honours the StatusHandler interface without ever persisting data. This lets
+  // the rest of the push pipeline keep its existing assumptions (object ids,
+  // method calls, queue payloads) while skipping the expensive database writes.
   if (config.disablePushStatus) {
     let objectId = existingObjectId;
     let pushStatus;
     const ensureObjectId = function () {
+      // Reuse the provided id if one exists (worker callbacks) or lazily create
+      // a synthetic id so adapters can still log a stable identifier.
       if (!objectId) {
         objectId = newObjectId(config.objectIdSize);
       }
