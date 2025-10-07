@@ -94,6 +94,7 @@ export class Config {
     databaseOptions,
     extendSessionOnUse,
     allowClientClassCreation,
+    disablePushStatus,
   }) {
     if (masterKey === readOnlyMasterKey) {
       throw new Error('masterKey and readOnlyMasterKey should be different');
@@ -139,6 +140,7 @@ export class Config {
     this.validateDatabaseOptions(databaseOptions);
     this.validateCustomPages(customPages);
     this.validateAllowClientClassCreation(allowClientClassCreation);
+    this.validateDisablePushStatus(disablePushStatus);
   }
 
   static validateCustomPages(customPages) {
@@ -192,6 +194,12 @@ export class Config {
   static validateAllowClientClassCreation(allowClientClassCreation) {
     if (typeof allowClientClassCreation !== 'boolean') {
       throw 'Parse Server option allowClientClassCreation must be a boolean.';
+    }
+  }
+
+  static validateDisablePushStatus(disablePushStatus) {
+    if (typeof disablePushStatus !== 'boolean') {
+      throw 'Parse Server option disablePushStatus must be a boolean.';
     }
   }
 

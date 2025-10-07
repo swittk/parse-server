@@ -41,6 +41,7 @@ export interface ParseServerOptions {
     filesAdapter?: Adapter<FilesAdapter>;
     push?: any;
     scheduledPush?: boolean;
+    disablePushStatus?: boolean;
     loggerAdapter?: Adapter<LoggerAdapter>;
     jsonLogs?: boolean;
     logsFolder?: string;

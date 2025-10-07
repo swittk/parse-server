@@ -199,6 +199,12 @@ module.exports.ParseServerOptions = {
     action: parsers.booleanParser,
     default: true,
   },
+  disablePushStatus: {
+    env: 'PARSE_SERVER_DISABLE_PUSH_STATUS',
+    help: 'Disable recording push status updates in the `_PushStatus` collection. When `true`, Parse Server skips writing push status updates to the database which disables push status querying and features that depend on `_PushStatus` records (for example scheduled push monitoring). Default is `false`.',
+    action: parsers.booleanParser,
+    default: false,
+  },
   dotNetKey: {
     env: 'PARSE_SERVER_DOT_NET_KEY',
     help: 'Key for Unity and .Net SDK',

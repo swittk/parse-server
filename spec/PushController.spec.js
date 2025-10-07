@@ -518,6 +518,48 @@ describe('PushController', () => {
     expect(succeedCount).toBe(1);
   });
 
+  it('does not create _PushStatus when disabled', async () => {
+    const pushAdapter = {
+      send: jasmine.createSpy('send').and.callFake((body, installations) => {
+        return successfulTransmissions(body, installations);
+      }),
+      getValidPushTypes: function () {
+        return ['ios'];
+      },
+    };
+    await reconfigureServer({
+      push: { adapter: pushAdapter },
+      disablePushStatus: true,
+    });
+    const config = Config.get(Parse.applicationId);
+    const auth = {
+      isMaster: true,
+    };
+    const installation = new Parse.Object('_Installation');
+    installation.set('installationId', 'installation_disabled_push_status');
+    installation.set('deviceToken', 'device_token_disabled_push_status');
+    installation.set('deviceType', 'ios');
+    await installation.save(null, { useMasterKey: true });
+
+    const payload = {
+      data: {
+        alert: 'Hello Disabled Status!',
+      },
+    };
+    const pushStatusId = await sendPush(payload, {}, config, auth);
+    await jasmine.timeout();
+    expect(typeof pushStatusId).toBe('string');
+    expect(pushStatusId.length).toBe(10);
+    expect(pushAdapter.send).toHaveBeenCalled();
+    await jasmine.timeout();
+    const query = new Parse.Query('_PushStatus');
+    query.equalTo('objectId', pushStatusId);
+    const pushStatus = await query.first({ useMasterKey: true });
+    expect(pushStatus).toBeUndefined();
+    const count = await query.count({ useMasterKey: true });
+    expect(count).toBe(0);
+  });
+
   it_id('30e0591a-56de-4720-8c60-7d72291b532a')(it)('properly creates _PushStatus without serverURL', async () => {
     const pushStatusAfterSave = {
       handler: function () {},

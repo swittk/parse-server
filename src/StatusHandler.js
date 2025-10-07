@@ -128,6 +128,46 @@ export function jobStatusHandler(config) {
 }
 
 export function pushStatusHandler(config, existingObjectId) {
+  if (config.disablePushStatus) {
+    let objectId = existingObjectId;
+    let pushStatus;
+    const ensureObjectId = function () {
+      if (!objectId) {
+        objectId = newObjectId(config.objectIdSize);
+      }
+    };
+    const setInitial = function (body = {}, where, options = { source: 'rest' }) {
+      ensureObjectId();
+      pushStatus = {
+        objectId,
+      };
+      return Promise.resolve(pushStatus);
+    };
+    const setRunning = function (batches) {
+      return Promise.resolve();
+    };
+    const trackSent = function (results, UTCOffset) {
+      return Promise.resolve();
+    };
+    const complete = function () {
+      return Promise.resolve();
+    };
+    const fail = function (err) {
+      return Promise.resolve();
+    };
+    const rval = {
+      setInitial,
+      setRunning,
+      trackSent,
+      complete,
+      fail,
+    };
+    Object.defineProperty(rval, 'objectId', {
+      get: () => objectId,
+    });
+    return Object.freeze(rval);
+  }
+
   let pushStatus;
   const database = config.database;
   const handler = restStatusHandler(PUSH_STATUS_COLLECTION, config);

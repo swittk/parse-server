@@ -78,6 +78,9 @@ export interface ParseServerOptions {
   /* Configuration for push scheduling, defaults to false.
   :DEFAULT: false */
   scheduledPush: ?boolean;
+  /* Disable recording push status updates in the `_PushStatus` collection. When `true`, Parse Server skips writing push status updates to the database which disables push status querying and features that depend on `_PushStatus` records (for example scheduled push monitoring). Default is `false`.
+  :DEFAULT: false */
+  disablePushStatus: ?boolean;
   /* Adapter module for the logging sub-system */
   loggerAdapter: ?Adapter<LoggerAdapter>;
   /* Log as structured JSON objects
