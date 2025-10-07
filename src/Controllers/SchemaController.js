@@ -1484,6 +1484,12 @@ export default class SchemaController {
 
     const pointerFields = classPermissions[operation].pointerFields;
     if (Array.isArray(pointerFields) && pointerFields.length > 0) {
+      if (operation === 'create') {
+        throw new Parse.Error(
+          Parse.Error.OPERATION_FORBIDDEN,
+          `Permission denied for action ${operation} on class ${className}.`
+        );
+      }
       // any op except 'addField as part of create' is ok.
       if (operation !== 'addField' || action === 'update') {
         // We can allow adding field on update flow only.
