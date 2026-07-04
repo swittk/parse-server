@@ -228,7 +228,13 @@ module.exports = function (authOptions = {}, enableAnonymousUsers = true) {
     const adapters = Object.keys(authData);
     await Promise.all(
       adapters.map(async provider => {
-        const authAdapter = getValidatorForProvider(provider);
+        // When an auth adapter is disabled, the auth data that remains on the User object
+        // cannot be validated anymore. So we simply skip if the authOptions doesn't have the
+        // provider anymore. Otherwise we'd crash in fetch (in afterFind with internal server error).
+        if (!Object.prototype.hasOwnProperty.call(authOptions, provider)) {
+          return;
+        }
+        const authAdapter = loadAuthAdapter(provider, authOptions);
         if (!authAdapter) {
           return;
         }
